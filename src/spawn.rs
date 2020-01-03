@@ -8,8 +8,8 @@ use std::sync::{Arc, Weak};
 use std::task::{Context, Poll};
 
 use crate::handle::JoinHandle;
-use crate::scope::Cancellation;
-use crate::with_cancellation::WithCancellation;
+use crate::with_token::WithToken;
+use crate::Token;
 use crate::{waker, Canceled};
 
 pub struct SpawnFuture<F>(Option<F>);
@@ -26,16 +26,25 @@ where
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let fut = self.0.take().expect("already spawned");
         let data = unsafe { waker::retrieve_data(cx).expect("must be polled in a scope") };
-        match Weak::upgrade(&data.cancellation.sender) {
-            Some(sender) => {
-                let inner = tokio::spawn(async {
-                    let fut = WithCancellation::new(crate::cancelable(fut));
+        match Weak::upgrade(&data.token.join) {
+            Some(join) => {
+                let cancel = data.token.cancel.clone();
+                let inner = tokio::spawn(async move {
+                    let fut = WithToken::new(crate::cancelable(fut));
                     pin_mut!(fut);
-                    let cancellation = Cancellation::new(Arc::downgrade(&sender));
 
-                    let ret = poll_fn(move |cx| fut.as_mut().poll(cx, cancellation.clone())).await;
+                    let ret = poll_fn(|cx| {
+                        let token = Token {
+                            cancel: cancel.clone(),
+                            join: Arc::downgrade(&join),
+                        };
+                        fut.as_mut().poll(cx, token)
+                    })
+                    .await;
 
-                    drop(sender);
+                    drop(join);
+                    drop(cancel);
+
                     ret
                 });
 

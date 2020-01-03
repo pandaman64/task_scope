@@ -1,81 +1,49 @@
-use futures::channel::oneshot::{channel, Receiver, Sender};
-use futures::future::{maybe_done, MaybeDone};
-use futures::never::Never;
-use pin_project::pin_project;
+use futures_intrusive::channel::shared::oneshot_channel;
+use futures_intrusive::sync::Semaphore;
 
 use std::future::Future;
-use std::pin::Pin;
-use std::sync::{Arc, Mutex, Weak};
-use std::task::{Context, Poll};
+use std::sync::Arc;
 
-use crate::with_cancellation::WithCancellation;
+use crate::with_token::WithToken;
+use crate::{Join, Token};
 
-#[derive(Clone)]
-pub(crate) struct Cancellation {
-    pub(crate) sender: Weak<Mutex<Sender<Never>>>,
+fn make_join() -> (Arc<Join>, Arc<Semaphore>) {
+    let sem = Arc::new(Semaphore::new(true, 1));
+
+    let mut releaser = sem.try_acquire(1).unwrap();
+    assert_eq!(releaser.disarm(), 1);
+    drop(releaser);
+
+    (Arc::new(Join { sem: sem.clone() }), sem)
 }
 
-impl Cancellation {
-    pub(crate) fn new(sender: Weak<Mutex<Sender<Never>>>) -> Self {
-        Self { sender }
-    }
-}
-
-#[pin_project]
-pub struct ScopeFuture<F>
-where
-    F: Future,
-{
-    #[pin]
-    inner: WithCancellation<MaybeDone<F>>,
-    sender: Option<Arc<Mutex<Sender<Never>>>>,
-    #[pin]
-    receiver: Receiver<Never>,
-}
-
-impl<F> Future for ScopeFuture<F>
-where
-    F: Future,
-{
-    type Output = F::Output;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let mut this = self.project();
-
-        match this.inner.inner {
-            MaybeDone::Gone => panic!("poll after completion"),
-            MaybeDone::Future(_) => {
-                let sender = this.sender.as_ref().expect("poll after completion");
-                let cancellation = Cancellation {
-                    sender: Arc::downgrade(sender),
-                };
-
-                if let Poll::Pending = this.inner.as_mut().poll(cx, cancellation) {
-                    return Poll::Pending;
-                }
-
-                this.sender.take();
-            }
-            MaybeDone::Done(_) => {}
-        }
-
-        match this.receiver.poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(_)) => Poll::Ready(this.inner.project().inner.take_output().unwrap()),
-            Poll::Ready(Ok(_)) => unreachable!(),
-        }
-    }
-}
-
-pub fn scope<Fut>(inner: Fut) -> ScopeFuture<Fut>
+pub async fn scope<Fut>(inner: Fut) -> Fut::Output
 where
     Fut: Future,
 {
-    let (sender, receiver) = channel();
+    let (join, sem) = make_join();
 
-    ScopeFuture {
-        inner: WithCancellation::new(maybe_done(inner)),
-        sender: Some(Arc::new(Mutex::new(sender))),
-        receiver,
-    }
+    // signals receivers when this future is canceled (dropped)
+    let (_sender, receiver) = oneshot_channel();
+    let cancel = Arc::new(receiver);
+
+    let inner = WithToken::new(inner);
+    futures::pin_mut!(inner);
+
+    let output = futures::future::poll_fn(|cx| {
+        let token = Token {
+            cancel: cancel.clone(),
+            join: Arc::downgrade(&join),
+        };
+
+        inner.as_mut().poll(cx, token)
+    })
+    .await;
+
+    drop(join);
+    drop(cancel);
+
+    sem.acquire(1).await;
+
+    output
 }
