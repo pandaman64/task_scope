@@ -1,5 +1,5 @@
 use std::time::Duration;
-use tokio::time::delay_for;
+use tokio::time::{delay_for, timeout};
 
 use task_scope::{scope, spawn};
 
@@ -22,7 +22,7 @@ async fn test_basic() {
 
 #[tokio::test]
 async fn test_drop() {
-    tokio::time::timeout(
+    timeout(
         Duration::from_millis(50),
         scope(async {
             spawn(async {
