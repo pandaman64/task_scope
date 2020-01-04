@@ -1,4 +1,4 @@
-use futures_intrusive::channel::shared::oneshot_channel;
+use futures_intrusive::channel::shared::state_broadcast_channel;
 use futures_intrusive::sync::Semaphore;
 
 use std::future::Future;
@@ -24,7 +24,7 @@ where
     let (join, sem) = make_join();
 
     // signals receivers when this future is canceled (dropped)
-    let (_sender, receiver) = oneshot_channel();
+    let (_sender, receiver) = state_broadcast_channel();
     let cancel = Arc::new(receiver);
 
     let inner = WithToken::new(inner);

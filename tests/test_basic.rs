@@ -11,8 +11,7 @@ async fn test_basic() {
 
             println!("child is done");
         })
-        .await
-        .unwrap();
+        .await;
         println!("parent is done");
     })
     .await;
@@ -31,8 +30,7 @@ async fn test_drop() {
 
                 panic!("child is canceled");
             })
-            .await
-            .unwrap();
+            .await;
         }),
     )
     .await

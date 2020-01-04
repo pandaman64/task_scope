@@ -8,9 +8,9 @@ use std::sync::{Arc, Weak};
 use std::task::{Context, Poll};
 
 use crate::handle::JoinHandle;
+use crate::waker;
 use crate::with_token::WithToken;
 use crate::Token;
-use crate::{waker, Canceled};
 
 pub struct SpawnFuture<F>(Option<F>);
 
@@ -21,37 +21,34 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    type Output = Result<JoinHandle<F::Output>, Canceled>;
+    type Output = JoinHandle<F::Output>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let fut = self.0.take().expect("already spawned");
         let data = unsafe { waker::retrieve_data(cx).expect("must be polled in a scope") };
-        match Weak::upgrade(&data.token.join) {
-            Some(join) => {
-                let cancel = data.token.cancel.clone();
-                let inner = tokio::spawn(async move {
-                    let fut = WithToken::new(crate::cancelable(fut));
-                    pin_mut!(fut);
+        let join = Weak::upgrade(&data.token.join).expect("no task is running");
 
-                    let ret = poll_fn(|cx| {
-                        let token = Token {
-                            cancel: cancel.clone(),
-                            join: Arc::downgrade(&join),
-                        };
-                        fut.as_mut().poll(cx, token)
-                    })
-                    .await;
+        let cancel = data.token.cancel.clone();
+        let inner = tokio::spawn(async move {
+            let fut = WithToken::new(crate::cancelable(fut));
+            pin_mut!(fut);
 
-                    drop(join);
-                    drop(cancel);
+            let ret = poll_fn(|cx| {
+                let token = Token {
+                    cancel: cancel.clone(),
+                    join: Arc::downgrade(&join),
+                };
+                fut.as_mut().poll(cx, token)
+            })
+            .await;
 
-                    ret
-                });
+            drop(join);
+            drop(cancel);
 
-                Poll::Ready(Ok(JoinHandle { inner }))
-            }
-            None => Poll::Ready(Err(Canceled)),
-        }
+            ret
+        });
+
+        Poll::Ready(JoinHandle { inner })
     }
 }
 

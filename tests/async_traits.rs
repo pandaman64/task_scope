@@ -23,8 +23,7 @@ fn test_infinite() {
 
                         panic!("never ends");
                     })
-                    .await
-                    .unwrap();
+                    .await;
 
                     println!("parent end");
                 }),
@@ -48,10 +47,9 @@ async fn test_cancel_infinite() {
 
                 copy(&mut fast_read, &mut fast_write).await.unwrap_err();
 
-                println!("copy is canceled");
+                println!("copy is canceled (after parent is dropped)");
             })
-            .await
-            .unwrap();
+            .await;
 
             println!("parent end");
         }),

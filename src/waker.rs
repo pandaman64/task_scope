@@ -1,8 +1,8 @@
 use futures::future::OptionFuture;
+use futures_intrusive::channel::{shared::StateReceiveFuture, StateId};
 
 use std::task::{Context, RawWaker, RawWakerVTable, Waker};
 
-use crate::cancellation_future::CancellationFuture;
 use crate::Token;
 
 pub(crate) struct WakerData {
@@ -32,14 +32,16 @@ pub(crate) unsafe fn retrieve_data<'c, 'w>(cx: &'c mut Context<'w>) -> Option<&'
 }
 
 // returns a future that resolves to
-// - Some(()) when the current scope is canceled
+// - Some(Some(state_id, true)) when the current scope requests cancellation
+// - Some(None) when the current scope is dropped
 // - None when the current context doesn't support cancellation
-pub(crate) fn cancellation_future<'c, 'w>(
+pub(crate) fn cancellation<'c, 'w>(
     cx: &'c mut Context<'w>,
-) -> OptionFuture<CancellationFuture> {
+    state_id: StateId,
+) -> OptionFuture<StateReceiveFuture<parking_lot::RawMutex, bool>> {
     unsafe {
         if let Some(data) = retrieve_data(cx) {
-            Some(CancellationFuture::new(data.token.cancel.receive())).into()
+            Some(data.token.cancel.receive(state_id)).into()
         } else {
             None.into()
         }
