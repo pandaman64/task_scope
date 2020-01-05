@@ -1,4 +1,4 @@
-//! A runtime extension for supporting Structured Concurrency with task spawning.
+//! A runtime extension for adding support for Structured Concurrency to existing runtimes.
 //!
 //! # What is Strucutured Concurrency?
 //! [Structured Concurrency] is a programming paradigm that lets asynchronous operations run only
