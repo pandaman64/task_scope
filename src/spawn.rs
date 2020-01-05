@@ -1,5 +1,5 @@
-use futures::future::poll_fn;
-use futures::pin_mut;
+use futures::future::{poll_fn, FusedFuture};
+use futures::{pin_mut, poll};
 
 use std::future::Future;
 use std::marker::Unpin;
@@ -8,10 +8,13 @@ use std::sync::{Arc, Weak};
 use std::task::{Context, Poll};
 
 use crate::handle::JoinHandle;
-use crate::waker;
 use crate::with_token::WithToken;
-use crate::Token;
+use crate::{cancellation, waker, Canceled, Token};
 
+/// A future that spawns the given future on the first poll.
+///
+/// This future is created by [`spawn`] function.
+#[must_use = "do not spawn unless polled"]
 pub struct SpawnFuture<F>(Option<F>);
 
 impl<F> Unpin for SpawnFuture<F> {}
@@ -30,8 +33,21 @@ where
 
         let cancel = data.token.cancel.clone();
         let inner = tokio::spawn(async move {
-            let fut = WithToken::new(crate::cancelable(fut));
+            let fut = WithToken::new(fut);
             pin_mut!(fut);
+
+            let cancellation = cancellation();
+            pin_mut!(cancellation);
+
+            // stop the task only if a forceful cancellation is issued.
+            // currently, the children can continue running on a graceful cancellation
+            // so that they can perform custom cancellation logic
+            //
+            // TODO: add a builder API (and a helper) for automatically canceling
+            // the inner future on a graceful cancellation
+            if let Poll::Ready(Some(Canceled::Forced)) = poll!(cancellation) {
+                return Err(Canceled::Forced);
+            }
 
             let ret = poll_fn(|cx| {
                 let token = Token {
@@ -45,13 +61,38 @@ where
             drop(join);
             drop(cancel);
 
-            ret
+            Ok(ret)
         });
 
         Poll::Ready(JoinHandle { inner })
     }
 }
 
-pub fn spawn<F>(fut: F) -> SpawnFuture<F> {
-    SpawnFuture(Some(fut))
+impl<F> FusedFuture for SpawnFuture<F>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    fn is_terminated(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
+/// Creates a future that spawns the given task in the current scope.
+///
+/// `spawn` function does not spawn a new task immediately. Instead, it returns a future for
+/// spawning the given task. Currently, the returned future will spawn the task at the first
+/// poll, but future versions may defer the spawn (e.g. rate limiting new tasks).
+///
+/// A graceful cancellation request will be propagated to the spawned task. If the scope is
+/// forcibly canceled, the spawned task will not be resumed after the next cancellation point.
+///
+/// # Returns
+/// The returned future resolves to [`JoinHandle`] for the spawned task.
+/// `JoinHandle` can be used to wait for the completion of the task.
+///
+/// # Panics
+/// The returned future panics when polled **outside** of a scope or after the spawning.
+pub fn spawn<F>(task: F) -> SpawnFuture<F> {
+    SpawnFuture(Some(task))
 }

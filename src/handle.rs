@@ -5,6 +5,11 @@ use std::task::{Context, Poll};
 
 use crate::Canceled;
 
+/// A handle for joining on a spawned task.
+///
+/// This handle is created by awaiting a future returned by [`spawn`] function.
+///
+/// [`spawn`]: crate::spawn()
 #[pin_project]
 pub struct JoinHandle<T> {
     #[pin]

@@ -1,3 +1,4 @@
+use futures::pin_mut;
 use std::time::Duration;
 use tokio::io::*;
 use tokio::time::timeout;
@@ -42,7 +43,8 @@ async fn test_cancel_infinite() {
             println!("parent started");
             spawn(async {
                 // we need Box::pin for Unpin bound
-                let mut fast_read = Box::pin(cancelable(repeat(0)));
+                let fast_read = cancelable(repeat(0));
+                pin_mut!(fast_read);
                 let mut fast_write = sink();
 
                 copy(&mut fast_read, &mut fast_write).await.unwrap_err();

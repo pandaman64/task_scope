@@ -14,7 +14,8 @@ async fn test_basic() {
         .await;
         println!("parent is done");
     })
-    .await;
+    .await
+    .expect("must complete");
 
     delay_for(Duration::from_millis(1000)).await;
 }

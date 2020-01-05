@@ -1,3 +1,5 @@
+use futures::future::FusedFuture;
+use futures::stream::{FusedStream, Stream};
 use pin_project::pin_project;
 use std::future::Future;
 use std::pin::Pin;
@@ -5,6 +7,10 @@ use std::task::{Context, Poll};
 
 use crate::{Canceled, Cancellation};
 
+/// A cancelable wrapper for asynchronous operations.
+///
+/// This wrapper is created by [`cancelable`] function.
+#[must_use = "do nothing unless polled"]
 #[pin_project]
 pub struct Cancelable<T> {
     #[pin]
@@ -15,7 +21,12 @@ pub struct Cancelable<T> {
 }
 
 impl<T> Cancelable<T> {
-    pub fn poll_cancel(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Canceled>> {
+    /// Polls whether the task is canceled.
+    ///
+    /// # Returns
+    /// Returns `Ready(Some(reason))` if the task is canceled.
+    /// Returns `Ready(None)` if the context doesn't support cancellation.
+    pub fn poll_canceled(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Canceled>> {
         let mut this = self.project();
         // if the cancellation is forced, no need for polling again
         if *this.forced {
@@ -35,9 +46,13 @@ impl<T> Cancelable<T> {
             }
         })
     }
+
+    /// retrieve the inner value.
+    pub fn inner(self: Pin<&mut Self>) -> Pin<&mut T> {
+        self.project().inner
+    }
 }
 
-// these impls are based on futures' Abortable
 impl<T> Future for Cancelable<T>
 where
     T: Future,
@@ -45,11 +60,48 @@ where
     type Output = Result<T::Output, Canceled>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        if let Poll::Ready(Some(reason)) = self.as_mut().poll_cancel(cx) {
+        if let Poll::Ready(Some(reason)) = self.as_mut().poll_canceled(cx) {
             return Poll::Ready(Err(reason));
         }
 
         self.project().inner.poll(cx).map(Ok)
+    }
+}
+
+impl<T> FusedFuture for Cancelable<T>
+where
+    T: FusedFuture,
+{
+    fn is_terminated(&self) -> bool {
+        self.forced || self.inner.is_terminated()
+    }
+}
+
+impl<T> Stream for Cancelable<T>
+where
+    T: Stream,
+{
+    type Item = Result<T::Item, Canceled>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        if let Poll::Ready(Some(reason)) = self.as_mut().poll_canceled(cx) {
+            return Poll::Ready(Some(Err(reason)));
+        }
+
+        self.project().inner.poll_next(cx).map(|x| x.map(Ok))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl<T> FusedStream for Cancelable<T>
+where
+    T: FusedStream,
+{
+    fn is_terminated(&self) -> bool {
+        self.forced || self.inner.is_terminated()
     }
 }
 
@@ -69,7 +121,7 @@ mod tokio_impl {
             cx: &mut Context,
             buf: &mut [u8],
         ) -> Poll<Result<usize>> {
-            if let Poll::Ready(Some(reason)) = self.as_mut().poll_cancel(cx) {
+            if let Poll::Ready(Some(reason)) = self.as_mut().poll_canceled(cx) {
                 return Poll::Ready(Err(Error::new(ErrorKind::Other, reason)));
             }
 
@@ -85,7 +137,7 @@ mod tokio_impl {
             cx: &mut Context,
             buf: &mut B,
         ) -> Poll<Result<usize>> {
-            if let Poll::Ready(Some(reason)) = self.as_mut().poll_cancel(cx) {
+            if let Poll::Ready(Some(reason)) = self.as_mut().poll_canceled(cx) {
                 return Poll::Ready(Err(Error::new(ErrorKind::Other, reason)));
             }
 
@@ -105,7 +157,7 @@ mod tokio_impl {
             buf: &[u8],
         ) -> Poll<Result<usize>> {
             // TODO: shutdown on graceful cancellation?
-            if let Poll::Ready(Some(reason)) = self.as_mut().poll_cancel(cx) {
+            if let Poll::Ready(Some(reason)) = self.as_mut().poll_canceled(cx) {
                 return Poll::Ready(Err(Error::new(ErrorKind::Other, reason)));
             }
 
@@ -114,7 +166,7 @@ mod tokio_impl {
 
         fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
             // TODO: shutdown on graceful cancellation?
-            if let Poll::Ready(Some(reason)) = self.as_mut().poll_cancel(cx) {
+            if let Poll::Ready(Some(reason)) = self.as_mut().poll_canceled(cx) {
                 return Poll::Ready(Err(Error::new(ErrorKind::Other, reason)));
             }
 
@@ -123,7 +175,7 @@ mod tokio_impl {
 
         fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
             // TODO: keep shutting down on graceful cancellation?
-            if let Poll::Ready(Some(reason)) = self.as_mut().poll_cancel(cx) {
+            if let Poll::Ready(Some(reason)) = self.as_mut().poll_canceled(cx) {
                 return Poll::Ready(Err(Error::new(ErrorKind::Other, reason)));
             }
 
@@ -136,7 +188,7 @@ mod tokio_impl {
             buf: &mut B,
         ) -> Poll<Result<usize>> {
             // TODO: shutdown on graceful cancellation?
-            if let Poll::Ready(Some(reason)) = self.as_mut().poll_cancel(cx) {
+            if let Poll::Ready(Some(reason)) = self.as_mut().poll_canceled(cx) {
                 return Poll::Ready(Err(Error::new(ErrorKind::Other, reason)));
             }
 
@@ -145,6 +197,13 @@ mod tokio_impl {
     }
 }
 
+/// Creates a cancelable wrapper for asynchronous operations (`Future`/`AsyncRead`/`AsyncWrite`).
+///
+/// When the returned wrapper is polled, it will check if the task is canceled first. If the task is
+/// canceled (regardless of whether the cancellation is graceful or forced), the wrapper will not
+/// poll the inner future again and return an error.
+///
+/// This function can be used to introduce a cancellation point in a task.
 pub fn cancelable<T>(v: T) -> Cancelable<T> {
     Cancelable {
         inner: v,
