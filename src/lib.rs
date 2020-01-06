@@ -109,7 +109,7 @@ mod with_token;
 pub use cancelable::{cancelable, Cancelable};
 pub use cancellation::{cancellation, Cancellation};
 pub use scope::scope;
-pub use spawn::spawn;
+pub use spawn::*;
 
 /// The error type for cancellation.
 #[derive(Debug, PartialEq, Eq, Hash)]

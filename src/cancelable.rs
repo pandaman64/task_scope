@@ -105,6 +105,7 @@ where
     }
 }
 
+#[cfg(feature = "tokio")]
 mod tokio_impl {
     use bytes::buf::{Buf, BufMut};
     use std::mem::MaybeUninit;

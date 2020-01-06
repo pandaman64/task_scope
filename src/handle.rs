@@ -1,9 +1,23 @@
 use pin_project::pin_project;
+use std::error::Error;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use crate::Canceled;
+
+/// JoinHandle provided by the inner runtime
+pub trait RuntimeJoinHandle:
+    Future<
+    Output = Result<
+        Result<<Self as RuntimeJoinHandle>::Output, Canceled>,
+        <Self as RuntimeJoinHandle>::Error,
+    >,
+>
+{
+    type Output: Send + 'static;
+    type Error: Error + Send + 'static;
+}
 
 /// A handle for joining on a spawned task.
 ///
@@ -11,13 +25,17 @@ use crate::Canceled;
 ///
 /// [`spawn`]: crate::spawn()
 #[pin_project]
-pub struct JoinHandle<T> {
+pub struct JoinHandle<H> {
     #[pin]
-    pub(crate) inner: tokio::task::JoinHandle<Result<T, Canceled>>,
+    pub(crate) inner: H,
 }
 
-impl<T> Future for JoinHandle<T> {
-    type Output = Result<T, Box<dyn std::error::Error + 'static>>;
+impl<T, H> Future for JoinHandle<H>
+where
+    H: RuntimeJoinHandle<Output = T>,
+    T: Send + 'static,
+{
+    type Output = Result<T, Box<dyn std::error::Error + Send + 'static>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         match self.project().inner.poll(cx) {
