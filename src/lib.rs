@@ -83,6 +83,21 @@
 //! shorten the mercy period as short as possible because it's technically breaking the program's
 //! concurrency structure (a child is outliving the dropped parent).
 //!
+//! # `task_scope` is (almost) executor-agnostic
+//! `task_scope` works by adding cancellation information to the current asynchronous context
+//! provided by runtimes such as async-std and Tokio. Therefore, the propagation of cancellation
+//! works regardless of executors. Even it's possible to propagate a cancellation of a task
+//! running in a runtime to its child task running in another runtime.
+//!
+//! However, `task_scope` doesn't provide its own `spawn` API but delegates spawning to the executors.
+//! Thus, to use `spawn`, you need to declare which runtime(s) you want to extend with
+//! `task_scope` by enabling features of `task_scope`. For example, if you want to spawn a
+//! cancelable task in a Tokio runtime, you need to enable `"tokio"` feature of `task_scope` and to
+//! call [`task_scope::spawn::tokio::spawn`]. Currently, async-std and Tokio are supported.
+//!
+//! If only one runtime is enabled, [`task_scope::spawn`] refers to the `spawn` function for
+//! the runtime. By default, only `"tokio"` feature is enabled.
+//!
 //! [Structured Concurrency]: https://en.wikipedia.org/wiki/Structured_concurrency
 //! [`spawn`]: crate::spawn()
 //! [`scope`]: crate::scope()
@@ -90,6 +105,8 @@
 //! [`Cancellation`]: crate::Cancellation
 //! [`cancel`]: crate::scope::ScopeFuture::cancel
 //! [`force_cancel`]: crate::scope::ScopeFuture::force_cancel
+//! [`task_scope::spawn::tokio::spawn`]: crate::spawn::tokio::spawn
+//! [`task_scope::spawn`]: crate::spawn()
 //!
 
 use futures_intrusive::channel::shared::StateReceiver;
