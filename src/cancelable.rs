@@ -105,6 +105,63 @@ where
     }
 }
 
+mod futures_impl {
+    use futures::io::{AsyncRead, AsyncWrite, Error, ErrorKind, Result};
+
+    use super::*;
+
+    // TODO: figure out how vectored I/O and initializer work
+    impl<T> AsyncRead for Cancelable<T>
+    where
+        T: AsyncRead,
+    {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context,
+            buf: &mut [u8],
+        ) -> Poll<Result<usize>> {
+            if let Poll::Ready(Some(reason)) = self.as_mut().poll_canceled(cx) {
+                return Poll::Ready(Err(Error::new(ErrorKind::Other, reason)));
+            }
+
+            self.project().inner.poll_read(cx, buf)
+        }
+    }
+
+    impl<T> AsyncWrite for Cancelable<T>
+    where
+        T: AsyncWrite,
+    {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context,
+            buf: &[u8],
+        ) -> Poll<Result<usize>> {
+            if let Poll::Ready(Some(reason)) = self.as_mut().poll_canceled(cx) {
+                return Poll::Ready(Err(Error::new(ErrorKind::Other, reason)));
+            }
+
+            self.project().inner.poll_write(cx, buf)
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
+            if let Poll::Ready(Some(reason)) = self.as_mut().poll_canceled(cx) {
+                return Poll::Ready(Err(Error::new(ErrorKind::Other, reason)));
+            }
+
+            self.project().inner.poll_flush(cx)
+        }
+
+        fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
+            if let Poll::Ready(Some(reason)) = self.as_mut().poll_canceled(cx) {
+                return Poll::Ready(Err(Error::new(ErrorKind::Other, reason)));
+            }
+
+            self.project().inner.poll_close(cx)
+        }
+    }
+}
+
 #[cfg(feature = "tokio")]
 mod tokio_impl {
     use bytes::buf::{Buf, BufMut};
@@ -146,8 +203,6 @@ mod tokio_impl {
         }
     }
 
-    // TODO: not sure how cancellation and shutdown interacts.
-    // we should probably call poll_shutdown on cancallation.
     impl<T> AsyncWrite for Cancelable<T>
     where
         T: AsyncWrite,
@@ -157,7 +212,6 @@ mod tokio_impl {
             cx: &mut Context,
             buf: &[u8],
         ) -> Poll<Result<usize>> {
-            // TODO: shutdown on graceful cancellation?
             if let Poll::Ready(Some(reason)) = self.as_mut().poll_canceled(cx) {
                 return Poll::Ready(Err(Error::new(ErrorKind::Other, reason)));
             }
@@ -166,7 +220,6 @@ mod tokio_impl {
         }
 
         fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
-            // TODO: shutdown on graceful cancellation?
             if let Poll::Ready(Some(reason)) = self.as_mut().poll_canceled(cx) {
                 return Poll::Ready(Err(Error::new(ErrorKind::Other, reason)));
             }
@@ -175,7 +228,6 @@ mod tokio_impl {
         }
 
         fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
-            // TODO: keep shutting down on graceful cancellation?
             if let Poll::Ready(Some(reason)) = self.as_mut().poll_canceled(cx) {
                 return Poll::Ready(Err(Error::new(ErrorKind::Other, reason)));
             }
@@ -188,7 +240,6 @@ mod tokio_impl {
             cx: &mut Context,
             buf: &mut B,
         ) -> Poll<Result<usize>> {
-            // TODO: shutdown on graceful cancellation?
             if let Poll::Ready(Some(reason)) = self.as_mut().poll_canceled(cx) {
                 return Poll::Ready(Err(Error::new(ErrorKind::Other, reason)));
             }
