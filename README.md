@@ -1,6 +1,8 @@
 # `task_scope`
 
-`task_scope` is an asynchronous runtime extension for adding support for Structured Concurrency to existing runtimes (currently, only Tokio is supported).
+`task_scope` is an asynchronous runtime extension for adding support for Structured Concurrency to existing runtimes.
+
+For more details, please see [the API doc](https://docs.rs/task_scope/0.1.0/task_scope/).
 
 ## License
 
