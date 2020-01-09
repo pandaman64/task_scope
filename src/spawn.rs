@@ -1,5 +1,5 @@
 use futures::future::poll_fn;
-use futures::{pin_mut, poll};
+use futures::pin_mut;
 
 use std::future::Future;
 use std::sync::{Arc, Weak};
@@ -33,31 +33,34 @@ where
     let cancel = data.token.cancel.clone();
 
     async move {
-        let future = WithToken::new(future);
+        // introduce cancellation points at every yield
+        let future = WithToken::new(async move {
+            pin_mut!(future);
+
+            let cancellation = cancellation();
+            pin_mut!(cancellation);
+
+            poll_fn(|cx| {
+                // stop the task only if a forced cancellation is issued
+                // the tasks can continue running on a graceful cancellation
+                // so that they can perform custom cancellation logic
+                if let Poll::Ready(Some(Canceled::Forced)) = cancellation.as_mut().poll(cx) {
+                    return Poll::Ready(Err(Canceled::Forced));
+                }
+
+                future.as_mut().poll(cx).map(Ok)
+            })
+            .await
+        });
         pin_mut!(future);
 
-        let cancellation = cancellation();
-        pin_mut!(cancellation);
-
-        // stop the task only if a forceful cancellation is issued.
-        // currently, the children can continue running on a graceful cancellation
-        // so that they can perform custom cancellation logic
-        //
-        // TODO: add a builder API (and a helper) for automatically canceling
-        // the inner future on a graceful cancellation
-        if let Poll::Ready(Some(Canceled::Forced)) = poll!(cancellation) {
-            return Err(Canceled::Forced);
-        }
-
-        let ret = poll_fn(|cx| {
+        poll_fn(|cx| {
             let token = Token {
                 cancel: cancel.clone(),
                 join: Arc::downgrade(&join),
             };
             future.as_mut().poll(cx, token)
         })
-        .await;
-
-        Ok(ret)
+        .await
     }
 }

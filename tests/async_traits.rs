@@ -42,9 +42,8 @@ async fn test_cancel_infinite() {
         scope(async {
             println!("parent started");
             spawn(async {
-                // we need Box::pin for Unpin bound
                 let fast_read = cancelable(repeat(0));
-                pin_mut!(fast_read);
+                pin_mut!(fast_read); // for Unpin bound of copy
                 let mut fast_write = sink();
 
                 copy(&mut fast_read, &mut fast_write).await.unwrap_err();
