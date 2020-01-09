@@ -36,4 +36,6 @@ async fn test_drop() {
     )
     .await
     .unwrap_err();
+
+    delay_for(Duration::from_millis(60)).await;
 }
