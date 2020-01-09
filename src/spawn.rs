@@ -41,7 +41,7 @@ where
             pin_mut!(cancellation);
 
             poll_fn(|cx| {
-                // stop the task only if a forceful cancellation is issued
+                // stop the task only if a forced cancellation is issued
                 // the tasks can continue running on a graceful cancellation
                 // so that they can perform custom cancellation logic
                 if let Poll::Ready(Some(Canceled::Forced)) = cancellation.as_mut().poll(cx) {
